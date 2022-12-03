@@ -7,15 +7,14 @@ import numpy as np
 from torch.nn import init
 from einops import rearrange
 from einops.layers.torch import Rearrange
-from math import sqrt
 import torch.nn.functional as F
-
+from models.diff_aug import DiffAugment
 
 def conv_3x3_bn(inp, oup, image_size, downsample=False):
     stride = 1 if downsample == False else 2
     return nn.Sequential(
         nn.Conv3d(inp, oup, 3, stride, 1, bias=False),
-        nn.BatchNorm3d(oup),
+        nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
         nn.GELU()
     )
 
@@ -24,27 +23,48 @@ def tranConv_3x3_bn(inp, oup, image_size, upsample=False):
     if upsample:
         return nn.Sequential(
             nn.ConvTranspose3d(inp, oup, 3, stride, 1, output_padding=1, bias=False),
-            nn.BatchNorm3d(oup),
+            nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
             nn.GELU()
         )
     else:
         return nn.Sequential(
             nn.ConvTranspose3d(inp, oup, 3, stride, 1, bias=False),
-            nn.BatchNorm3d(oup),
+            nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
             nn.GELU()
         )
 
 
 class PreNorm(nn.Module):
-    def __init__(self, dim, fn, norm):
+    def __init__(self, dim, fn, norm, image_size, downsample, isTrans):
         super().__init__()
         self.dim = dim
-        self.norm = norm(dim)
+        if downsample:
+            image_size = (image_size[0]*2, image_size[1]*2, image_size[2]*2)
+        if isTrans:
+            self.norm = norm([image_size[0]*image_size[1]*image_size[2], dim])
+        else:
+            self.norm = norm([dim, image_size[0], image_size[1], image_size[2]])
         self.fn = fn
 
     def forward(self, x, **kwargs):
         return self.fn(self.norm(x), **kwargs)
 
+class TransPreNorm(nn.Module):
+    def __init__(self, dim, fn, norm, image_size, upsample, isTrans):
+        super().__init__()
+        self.dim = dim
+        if upsample and not isTrans:
+             image_size = (image_size[0]//2, image_size[1]//2, image_size[2]//2)
+        else:
+            image_size = image_size
+        if isTrans:
+            self.norm = norm([image_size[0]*image_size[1]*image_size[2], dim])
+        else:
+            self.norm = norm([dim, image_size[0], image_size[1], image_size[2]])
+        self.fn = fn
+
+    def forward(self, x, **kwargs):
+        return self.fn(self.norm(x), **kwargs)
 
 class SE(nn.Module):
     def __init__(self, inp, oup, expansion=0.25):
@@ -96,31 +116,31 @@ class MBConv(nn.Module):
                 # dw
                     nn.Conv3d(hidden_dim, hidden_dim, 3, stride,
                             1, groups=hidden_dim, bias=False),
-                    nn.BatchNorm3d(hidden_dim),
+                    nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
                     nn.GELU(),
                     # pw-linear
                     nn.Conv3d(hidden_dim, oup, 1, 1, 0, bias=False),
-                    nn.BatchNorm3d(oup),
+                    nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
                 )
         else:
             self.conv = nn.Sequential(
             # pw
             # down-sample in the first conv
                 nn.Conv3d(inp, hidden_dim, 1, stride, 0, bias=False),
-                nn.BatchNorm3d(hidden_dim),
+                nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
                 nn.GELU(),
                 # dw
                 nn.Conv3d(hidden_dim, hidden_dim, 3, 1, 1,
                           groups=hidden_dim, bias=False),
-                nn.BatchNorm3d(hidden_dim),
+                nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
                 nn.GELU(),
                 SE(inp, hidden_dim),
                 # pw-linear
                 nn.Conv3d(hidden_dim, oup, 1, 1, 0, bias=False),
-                nn.BatchNorm3d(oup),
+                nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
             )
 
-        self.conv = PreNorm(inp, self.conv, nn.BatchNorm3d)
+        self.conv = PreNorm(inp, self.conv, nn.LayerNorm, image_size, self.downsample, False)
         
     def forward(self, x):
         if self.downsample:
@@ -147,35 +167,55 @@ class TransMBConv(nn.Module):
                 # dw
                 nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, stride,
                             1, groups=hidden_dim, bias=False),
-                    nn.BatchNorm3d(hidden_dim),
+                    nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
                     nn.GELU(),
                     # pw-linear
                     nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
-                    nn.BatchNorm3d(oup),
+                    nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
                 )
         else:
-            self.deconv = nn.Sequential(
-            # pw
-            # up-sample in the first conv
-                nn.ConvTranspose3d(inp, hidden_dim, 1, stride, 0, bias=False),
-                nn.BatchNorm3d(hidden_dim),
-                nn.GELU(),
-                # dw
-                nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, 1, 1,
+            if self.upsample:
+                    self.deconv = nn.Sequential(
+                    # pw
+                    # up-sample in the first conv
+                    nn.ConvTranspose3d(inp, hidden_dim, 1, stride, 0, bias=False),
+                    nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    nn.GELU(),
+                    # dw
+                    nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, 1, 1,
                           groups=hidden_dim, bias=False),
-                nn.BatchNorm3d(hidden_dim),
-                nn.GELU(),
-                SE(inp, hidden_dim),
-                # pw-linear
-                nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
-                nn.BatchNorm3d(oup),
-            )
+                    nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    nn.GELU(),
+                    SE(inp, hidden_dim),
+                    # pw-linear
+                    nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
+                    nn.LayerNorm([oup, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                )
+            else:
+                self.deconv = nn.Sequential(
+                    # pw
+                    # up-sample in the first conv
+                    nn.ConvTranspose3d(inp, hidden_dim, 1, stride, 0, bias=False),
+                    nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                    nn.GELU(),
+                    # dw
+                    nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, 1, 1,
+                          groups=hidden_dim, bias=False),
+                    nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                    nn.GELU(),
+                    SE(inp, hidden_dim),
+                    # pw-linear
+                    nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
+                    nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+                )
 
-        self.deconv = PreNorm(inp, self.deconv, nn.BatchNorm3d)
+        self.deconv = TransPreNorm(inp, self.deconv, nn.LayerNorm, image_size, self.upsample, False)
         
     def forward(self, input):
         if self.upsample:
             x, y = input[0], input[1]
+            temp1 = self.proj(self.pool(x))
+            temp2 = self.deconv(x)
             upout = self.proj(self.pool(x)) + self.deconv(x)
 
             diffD = self.id - upout.size()[2]
@@ -206,23 +246,20 @@ class Attention(nn.Module):
         self.heads = heads
         self.scale = dim_head ** -0.5
 
-        # parameter table of relative position bias
-        self.relative_bias_table = nn.Parameter(
-            torch.zeros((2 * self.id - 1) * (2 * self.ih - 1) * (2 * self.iw - 1), heads))
+        # create embedding
+        self.relative_bias_table = nn.Embedding((self.id * self.ih * self.iw)*8, 1)
 
+        # [batch_size, num_heads, q_d * q_h * q_w, k_d * k_h * k_w]
         coords = torch.meshgrid((torch.arange(self.id), torch.arange(self.ih), torch.arange(self.iw)))
-        coords = torch.flatten(torch.stack(coords), 1)
-        relative_coords = coords[:, :, None] - coords[:, None, :]
+        # [q_d * q_h * q_w, 3]
+        coords = torch.flatten(torch.stack(coords), 1).permute(1, 0)
+        # [q_d * q_h * q_w, k_d * k_h * k_w, 3]
+        relative_pos = (coords[:, None, :] - coords[None, :, :])
+        relative_pos = relative_pos[:, :, 0] * self.ih * self.iw + relative_pos[:, :, 1] * self.iw + relative_pos[:, :, 2]
+        # move the whole values in relative_pos to be non-neagtive
+        relative_pos = relative_pos - relative_pos.min()
+        self.register_buffer("relative_pos", relative_pos)
         
-        #print(relative_coords.shape)
-        #relative_coords = relative_coords.permute(1, 2, 3, 0).contiguous()
-        relative_coords[0, :, :] += (self.ih - 1) + (self.id - 1)
-        relative_coords[1, :, :] += (self.iw - 1) + (self.id - 1)
-        relative_coords[0, :, :] *= 2 * self.id - 1
-        relative_coords = rearrange(relative_coords, 'c h w -> h w c')
-        relative_index = relative_coords.sum(-1).flatten().unsqueeze(1)
-        self.register_buffer("relative_index", relative_index)
-
         self.attend = nn.Softmax(dim=-1)
         self.to_qkv = nn.Linear(inp, inner_dim * 3, bias=False)
 
@@ -248,15 +285,9 @@ class Attention(nn.Module):
         # N = M^2
         attn = (q @ k.transpose(-2, -1))
 
-        
-
         # Use "gather" for more efficiency on GPUs
-        relative_bias = self.relative_bias_table.gather(
-            0, self.relative_index.repeat(1, self.heads))
-        relative_bias = rearrange(
-            relative_bias, '(h w) c -> 1 c h w', h=self.id*self.ih*self.iw, w=self.id*self.ih*self.iw)
-        attn = attn + relative_bias
-
+        attention_bias = self.relative_bias_table(self.relative_pos)[:, :, 0] # [q_d * q_h * q_w, k_d * k_h * k_w]
+        attn = attn + attention_bias
         attn = self.attend(attn)
         out = torch.matmul(attn, v)
         out = rearrange(out, 'b h n d -> b n (h d)')
@@ -282,13 +313,13 @@ class Transformer(nn.Module):
 
         self.attn = nn.Sequential(
             Rearrange('b c id ih iw -> b (id ih iw) c'),
-            PreNorm(inp, self.attn, nn.LayerNorm),
+            PreNorm(inp, self.attn, nn.LayerNorm, image_size, False, True),
             Rearrange('b (id ih iw) c -> b c id ih iw', ih=self.ih, iw=self.iw)
         )
 
         self.ff = nn.Sequential(
             Rearrange('b c id ih iw -> b (id ih iw) c'),
-            PreNorm(oup, self.ff, nn.LayerNorm),
+            PreNorm(oup, self.ff, nn.LayerNorm, image_size, False, True),
             Rearrange('b (id ih iw) c -> b c id ih iw', ih=self.ih, iw=self.iw)
         )
 
@@ -320,13 +351,13 @@ class TransTransformer(nn.Module):
 
         self.attn = nn.Sequential(
             Rearrange('b c id ih iw -> b (id ih iw) c'),
-            PreNorm(oup, self.attn, nn.LayerNorm),
+            TransPreNorm(oup, self.attn, nn.LayerNorm, image_size, self.upsample, True),
             Rearrange('b (id ih iw) c -> b c id ih iw', ih=self.ih, iw=self.iw)
         )
 
         self.ff = nn.Sequential(
             Rearrange('b c id ih iw -> b (id ih iw) c'),
-            PreNorm(oup, self.ff, nn.LayerNorm),
+            TransPreNorm(oup, self.ff, nn.LayerNorm, image_size, self.upsample, True),
             Rearrange('b (id ih iw) c -> b c id ih iw', ih=self.ih, iw=self.iw)
         )
 
@@ -352,13 +383,14 @@ class TransTransformer(nn.Module):
 
 
 class ConvTrantGe(nn.Module):
-    def __init__(self, image_size, in_channels, num_blocks, channels, batch_size, block_types=['C', 'C', 'T', 'T']):
+    def __init__(self, image_size, in_channels, num_blocks, channels, batch_size, diff_aug, block_types=['C', 'C', 'T', 'T']):
         super().__init__()
         self.id, self.ih, self.iw = image_size
         self.channels=channels
         self.batch_size = batch_size
         block = {'C': MBConv, 'T': Transformer}
         upsample_block = {'C': TransMBConv, 'T': TransTransformer}
+        self.diff_aug = diff_aug
 
         self.downs0 = self._make_layer_down(
             conv_3x3_bn, in_channels, channels[0], num_blocks[0], (self.id // 2, self.ih // 2, self.iw // 2))
@@ -370,8 +402,8 @@ class ConvTrantGe(nn.Module):
             block[block_types[2]], channels[2], channels[3], num_blocks[3], (self.id // 16, self.ih // 16, self.iw // 16))
         self.downs4 = self._make_layer_down(
             block[block_types[3]], channels[3], channels[4], num_blocks[4], (self.id // 32, self.ih // 32, self.iw // 32))
+    
         
-
         self.ups4  = self._make_layer_up(
             upsample_block[block_types[3]], channels[4], channels[3], num_blocks[4], (self.id // 16, self.ih // 16, self.iw // 16))
         self.ups3  = self._make_layer_up(
@@ -384,10 +416,14 @@ class ConvTrantGe(nn.Module):
             tranConv_3x3_bn, channels[0], in_channels, num_blocks[0], (self.id , self.ih, self.iw)) 
 
         # self.ups0  = nn.ConvTranspose3d(channels[0],  in_channels, 3, 1, 1, bias=False)
-       
-        self.pool = nn.AvgPool2d(self.id // 32, 1)
+
+        self.out = nn.Sequential(
+            nn.Upsample(scale_factor=0.5, mode='trilinear'),
+            nn.Tanh()
+        )
 
     def forward(self, x):
+        x = DiffAugment(x, self.diff_aug)
         x = self.downs0(x)
         stage1 = self.downs1(x)
         stage2 = self.downs2(stage1)
@@ -404,8 +440,9 @@ class ConvTrantGe(nn.Module):
         del upstage2, x
         upstage0 = self.ups0(upstage1)
         del upstage1
-
-        return upstage0
+        #print(upstage0.min(), upstage0.max())
+        #print("Gen: min:{}, max:{}".format(upstage0.min(), upstage0.max()))
+        return  self.out(upstage0) #torch.tanh(upstage0)
 
     def _make_layer_down(self, block, inp, oup, depth, image_size):
         layers = nn.ModuleList([])
@@ -430,12 +467,28 @@ class ConvTrantGe(nn.Module):
 
 
 def generate_ConvTrantGe(args):
-    num_blocks = [2, 2, 3, 8, 2]# L
-    channels = [64, 96, 192, 384, 768]
+    num_blocks = [2, 2, 2, 3, 2]
+    # num_blocks =[2, 2, 4, 7, 3] # L
+    channels = [32, 64, 128, 256, 512]
+    #channels = [32, 64, 128, 256, 512]
     #patch_size = [8, 4, 2, 1]      # D
-    return ConvTrantGe((96, 128, 96), 1, num_blocks, channels, args.batch_size)
+    #channels  = [128, 128, 256, 512, 1026]
+    # return ConvTrantGe((96, 128, 96), 1, num_blocks, channels, args.batch_size)
+    return ConvTrantGe((96, 128, 96), 1, num_blocks, channels, 1, 'interpolation')
 
+
+def define_gen(args, image_size, num_blocks, channels, in_channel):
+    return ConvTrantGe(image_size, in_channel, num_blocks, channels, args.batch_size, args.diff_aug)
 
 
 def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
+
+# if __name__ == '__main__':
+#     args=None
+#     USE_CUDA = torch.cuda.is_available()
+#     device = torch.device("cuda:4" if USE_CUDA else "cpu")
+#     img = torch.randn(1, 1, 96, 128, 96).to(device)
+#     net = generate_ConvTrantGe(args).to(device)
+#     out = net(img)
+#     A=1

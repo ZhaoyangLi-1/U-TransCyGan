@@ -126,3 +126,8 @@ def cal_gradient_penalty(netD, real_data, fake_data, device, type='mixed', const
         return gradient_penalty
     else:
         return 0.0
+
+def cal_penalty_intensity(fake_img, lambda_x_k=23, lambda_x_b=-23, lambda_c=1):
+    avg_intensity = torch.mean(fake_img)
+    penalty = torch.exp(lambda_x_k*avg_intensity+lambda_x_b) + lambda_c
+    return penalty

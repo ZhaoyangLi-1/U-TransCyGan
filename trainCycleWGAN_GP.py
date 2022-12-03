@@ -24,7 +24,7 @@ import numpy as np
 from matplotlib import pyplot as plt
 import matplotlib
 from models.GANLoss import GANLoss
-from models.GANLoss import cal_gradient_penalty
+from models.GANLoss import cal_gradient_penalty, cal_penalty_intensity
 from itertools import repeat
 from utils.utils import ImagePool
 from torch.optim import lr_scheduler
@@ -204,9 +204,10 @@ def train(train_loader, args, G_M, G_P, D_P, D_M, L1, criterionGAN,
             D_P_fake = D_P(fake_pet.detach())
             D_P_real_loss = criterionGAN(D_P_real, True) # L1
             D_P_fake_loss = criterionGAN(D_P_fake, False) # L1 
-            gp = cal_gradient_penalty(D_P, img_pet, fake_pet, device, lambda_gp=20)
+            gp = cal_gradient_penalty(D_P, img_pet, fake_pet, device, lambda_gp=10)
+            lambda_intensity = cal_penalty_intensity(fake_pet)
             # l1_regular_P = compute_regular(D_P, args.l1_lamda)
-            D_P_loss = D_P_real_loss + D_P_fake_loss + gp
+            D_P_loss = D_P_real_loss + lambda_intensity*D_P_fake_loss + gp
 
         
             fake_mri = G_M(img_pet)
@@ -214,9 +215,10 @@ def train(train_loader, args, G_M, G_P, D_P, D_M, L1, criterionGAN,
             D_M_fake = D_M(fake_mri.detach())
             D_M_real_loss = criterionGAN(D_M_real,True)
             D_M_fake_loss = criterionGAN(D_M_fake, False)
-            gp = cal_gradient_penalty(D_M, img_mri, fake_mri, device, lambda_gp=20)
+            gp = cal_gradient_penalty(D_M, img_mri, fake_mri, device, lambda_gp=10)
             #l1_regular_M = compute_regular(D_M, args.l1_lamda)
-            D_M_loss = D_M_real_loss + D_M_fake_loss + gp
+            lambda_intensity = cal_penalty_intensity(fake_mri)
+            D_M_loss = D_M_real_loss + lambda_intensity*D_M_fake_loss + gp
 
             D_loss = (D_P_loss + D_M_loss) * 0.5 #+ (l1_regular_P + l1_regular_M)
             D_loss.backward()
@@ -318,9 +320,9 @@ def main(args):
     writer = SummaryWriter(log_dir=args.log_dir)
 
     USE_CUDA = torch.cuda.is_available()
-    device = torch.device("cuda:4" if USE_CUDA else "cpu")
+    device = torch.device("cuda:0" if USE_CUDA else "cpu")
 
-    gpus = [4,5,6,7]
+    gpus = [0,1,2,3,4,5,6,7]
     #gpus = [1,2,3]
 
     G_M = generate_ConvTrantGe(args)
@@ -439,8 +441,8 @@ if __name__ == '__main__':
                         help='Directory to save the log')
     parser.add_argument('--lr', type=float, default=1e-4)
     parser.add_argument('--lr_decay', type=float, default=1e-5)
-    parser.add_argument('--max_iter', type=int, default=400)
-    parser.add_argument('--batch_size', type=int, default=4) 
+    parser.add_argument('--max_iter', type=int, default=200)
+    parser.add_argument('--batch_size', type=int, default=8) 
     parser.add_argument('--lamda_cycle', type=float, default=10)
     parser.add_argument('--lamda_identity', type=float, default=0.5)
     parser.add_argument('--checkpoint_gen_m', default='./saved/genm.pth.tar')

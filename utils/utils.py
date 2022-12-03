@@ -3,15 +3,13 @@ import math
 
 import torch
 import torch.nn.functional as F
-import random
 import time
 import datetime
 import sys
-
-from torch.autograd import Variable
-import torch
-from visdom import Visdom
+import random
 import numpy as np
+from torch.autograd import Variable
+from visdom import Visdom
 
 
 class LambdaLR():
@@ -189,3 +187,52 @@ def weights_init_normal(m):
     elif classname.find('BatchNorm2d') != -1:
         torch.nn.init.normal(m.weight.data, 1.0, 0.02)
         torch.nn.init.constant(m.bias.data, 0.0)
+
+
+def cal_gradient_penalty(D, real, fake):
+    # each sample match a sigma。# of sample 64，feature number is 512：[64,512]
+    sigma = torch.rand(real.size(0), 1)  # [64,1]
+    sigma = sigma.expand(real.size())  # [64, 512]
+    # x_hat
+    x_hat = sigma * real + (torch.tensor(1.) - sigma) * fake
+    x_hat.requires_grad = True
+    # compute y
+    d_x_hat = D(x_hat)
+
+    # compute gradient,autograd.grad return a tuple(gradient，)
+    gradients = torch.autograd.grad(outputs=d_x_hat, inputs=x_hat,
+                                    grad_outputs=torch.ones(d_x_hat.size()),
+                                    create_graph=True, retain_graph=True, only_inputs=True)[0]
+    # compute gradient penalty
+    gradient_penalty = ((gradients.norm(2, dim=1) - 1) ** 2).mean()
+    return gradient_penalty
+
+
+class ImagePool():
+    def __init__(self, pool_size):
+        self.pool_size = pool_size
+        if self.pool_size > 0:
+            self.num_imgs = 0
+            self.images = []
+
+    def query(self, images):
+        if self.pool_size == 0:
+            return Variable(images)
+        return_images = []
+        for image in images:
+            image = torch.unsqueeze(image, 0)
+            if self.num_imgs < self.pool_size:
+                self.num_imgs = self.num_imgs + 1
+                self.images.append(image)
+                return_images.append(image)
+            else:
+                p = random.uniform(0, 1)
+                if p > 0.5:
+                    random_id = random.randint(0, self.pool_size-1)
+                    tmp = self.images[random_id].clone()
+                    self.images[random_id] = image
+                    return_images.append(tmp)
+                else:
+                    return_images.append(image)
+        return_images = Variable(torch.cat(return_images, 0))
+        return return_images

@@ -41,10 +41,12 @@ def main(args):
 
 
     USE_CUDA = torch.cuda.is_available()
-    device = torch.device("cuda:0" if USE_CUDA else "cpu")
+    device = torch.device("cuda:4" if USE_CUDA else "cpu")
 
-    G_M = nn.DataParallel(G_M)
-    G_P = nn.DataParallel(G_P)
+    gpus = [4,5,6]
+
+    G_M = nn.DataParallel(G_M, device_ids=gpus, output_device=gpus[0])
+    G_P = nn.DataParallel(G_P, device_ids=gpus, output_device=gpus[0])
 
     G_M.to(device)
     G_P.to(device)
@@ -60,6 +62,7 @@ def main(args):
     ith_image_mri = 0
     ith_image_pet = 0
     for idx, batch in enumerate(val_loader):
+        if idx is 3: break
         img_mri = batch['img_mri'].reshape((args.batch_size, 48, 64, 48, 1)).permute(0, 4, 1, 2, 3)
         img_pet = batch['img_pet'].reshape((args.batch_size, 48, 64, 48, 1)).permute(0, 4, 1, 2, 3)
         #os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
@@ -113,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--input_w', default=96, type=int)
     parser.add_argument('--input_h', default=128, type=int)
     parser.add_argument('--input_d', default=96, type=int)
-    parser.add_argument('--batch_size', type=int, default=7) 
+    parser.add_argument('--batch_size', type=int, default=5) 
     parser.add_argument('--style_weight', type=float, default=10.0)
     parser.add_argument('--content_weight', type=float, default=7.0)
     parser.add_argument('--n_thr    eads', type=int, default=16)

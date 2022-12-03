@@ -14,6 +14,7 @@ import numpy as np
 from Brain_img.read_3D import get_data_loader
 from models.generator import generate_ConvTrantGe
 from models.discriminator import generate_dis
+#from models.TransGAN_Disc import generate_dis
 import torch.optim as optim
 import numpy as np
 from matplotlib import pyplot as plt
@@ -81,7 +82,7 @@ def train(train_loader, val_loader, args, G_M, G_P, D_P, D_M, L1, MSE, opt_disc,
         img_pet = batch['img_pet'].reshape((args.batch_size, 48, 64, 48, 1)).permute(0, 4, 1, 2, 3)
         #img_mri = img_mri.permute(0, 4, 1, 2, 3)
         #img_pet = img_pet.permute(0, 4, 1, 2, 3)
-        os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
+        #os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
         #N, C, D, H, W = content_images.shape
         img_mri = F.interpolate(img_mri, size=(96, 128, 96), mode='nearest').to(device)
         img_pet = F.interpolate(img_pet, size=(96, 128, 96), mode='nearest').to(device)
@@ -202,15 +203,17 @@ def main(args):
     USE_CUDA = torch.cuda.is_available()
     device = torch.device("cuda:0" if USE_CUDA else "cpu")
 
+    gpus = [0,1,2,3]
+
     G_M = generate_ConvTrantGe(args)
     G_P = generate_ConvTrantGe(args)
     D_M = generate_dis(args)
     D_P = generate_dis(args)
 
-    G_M = nn.DataParallel(G_M)
-    G_P = nn.DataParallel(G_P)
-    D_M = nn.DataParallel(D_M)
-    D_P = nn.DataParallel(D_P)
+    G_M = nn.DataParallel(G_M, device_ids=gpus, output_device=gpus[0])
+    G_P = nn.DataParallel(G_P, device_ids=gpus, output_device=gpus[0])
+    D_M = nn.DataParallel(D_M, device_ids=gpus, output_device=gpus[0])
+    D_P = nn.DataParallel(D_P, device_ids=gpus, output_device=gpus[0])
 
     G_M.to(device)
     G_P.to(device)
@@ -275,8 +278,8 @@ def main(args):
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser()
+    
     # Basic options
-
     parser.add_argument('--train_tfrecord_pattern', default='./Brain_img/3D/train/train{}.tfrecords', type=str,
                         help='train tfrecord path to a batch of content and style images')
     parser.add_argument('--train_index_pattern', default='./Brain_img/index/train/train{}.index', type=str,
@@ -304,11 +307,11 @@ if __name__ == '__main__':
     parser.add_argument('--lr', type=float, default=5e-4)
     parser.add_argument('--lr_decay', type=float, default=1e-5)
     parser.add_argument('--max_iter', type=int, default=200)
-    parser.add_argument('--batch_size', type=int, default=8) 
+    parser.add_argument('--batch_size', type=int, default=4) 
     parser.add_argument('--style_weight', type=float, default=10.0)
     parser.add_argument('--content_weight', type=float, default=7.0)
     parser.add_argument('--n_threads', type=int, default=16)
-    parser.add_argument('--save_model_interval', type=int, default=400)
+    parser.add_argument('--save_model_interval', type=int, default=300)
     parser.add_argument('--position_embedding', default='sine', type=str, choices=('sine', 'learned'),
                         help="Type of positional embedding to use on top of the image features")
     parser.add_argument('--hidden_dim', default=512, type=int,

@@ -24,8 +24,8 @@ def conv_3x3_bn(inp, oup, image_size, downsample=False):
     stride = 1 if downsample == False else 2
     return nn.Sequential(
         nn.Conv3d(inp, oup, 3, stride, 1, bias=False),
-        nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
-        #nn.InstanceNorm3d(oup),
+        #nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+        nn.InstanceNorm3d(oup),
         nn.LeakyReLU(0.2, inplace=True)
     )
 
@@ -40,6 +40,7 @@ class PreNorm(nn.Module):
             self.norm = norm([image_size[0]*image_size[1]*image_size[2], dim])
         else:
             self.norm = norm([dim, image_size[0], image_size[1], image_size[2]])
+        # self.norm = norm(dim)
         self.fn = fn
 
     def forward(self, x, **kwargs):
@@ -97,10 +98,12 @@ class MBConv(nn.Module):
                     nn.Conv3d(hidden_dim, hidden_dim, 3, stride,
                             1, groups=hidden_dim, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                    #nn.InstanceNorm3d(hidden_dim),
                     nn.LeakyReLU(0.2, inplace=True),
                     # pw-linear
                     nn.Conv3d(hidden_dim, oup, 1, 1, 0, bias=False),
-                    nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+                    nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]])
+                    #nn.InstanceNorm3d(oup)
                 )
         else:
             self.conv = nn.Sequential(
@@ -108,16 +111,19 @@ class MBConv(nn.Module):
             # down-sample in the first conv
                 nn.Conv3d(inp, hidden_dim, 1, stride, 0, bias=False),
                 nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                #nn.InstanceNorm3d(hidden_dim),
                 nn.LeakyReLU(0.2, inplace=True),
                 # dw
                 nn.Conv3d(hidden_dim, hidden_dim, 3, 1, 1,
                           groups=hidden_dim, bias=False),
                 nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                #nn.InstanceNorm3d(hidden_dim),
                 nn.LeakyReLU(0.2, inplace=True),
                 SE(inp, hidden_dim),
                 # pw-linear
                 nn.Conv3d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+                #nn.InstanceNorm3d(oup),
             )
 
         self.conv = PreNorm(inp, self.conv, nn.LayerNorm, image_size, self.downsample, False)
@@ -309,11 +315,8 @@ def count_parameters(model):
     return sum(p.numel() for p in model.parameters() if p.requires_grad)
 
 def generate_dis(args):
-    num_blocks = [2, 2, 2, 3, 2]
-    #num_blocks = [2, 2, 4, 7, 3]           # L
-    channels = [32, 64, 96, 192, 384]
-    #channels = [32, 64, 128, 256, 512]       # D
-    #channels  = [64, 96, 192, 368]
+    num_blocks = [2, 2, 3, 5, 2]
+    channels = [32, 64, 128, 256, 512]
     return discriminator(args, (96, 128, 96), 1, num_blocks, channels)
     #return Discriminator(args)
 

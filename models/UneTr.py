@@ -28,7 +28,7 @@ class TransformerEncoder(nn.Module):
 # implementation is influenced by practical details missing in the paper that can be found
 # https://github.com/Project-MONAI/MONAI/blob/027947bf91ff0dfac94f472ed1855cd49e3feb8d/monai/networks/nets/unetr.py
 # class UNETR(nn.Module):
-#     def __init__(self, img_shape=(128, 128, 128), input_dim=4, output_dim=3,
+#     def __init__(self, img_shape=(96, 128, 96), input_dim=1, output_dim=3,
 #                  embed_dim=768, patch_size=16, num_heads=12, dropout=0.0,
 #                  ext_layers=[3, 6, 9, 12], norm='instance',
 #                  base_filters=16,

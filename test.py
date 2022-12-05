@@ -16,13 +16,13 @@ def load_model(model, file_path):
     
 
 
-def save_image(file_path, img, type, ith_image, real):
+def save_image(file_path, img, type, ith_image, real, idx):
     batch_size, _, _, _, _ = img.size()
-    print("{} Image".format(type))
+    print("{} Image {}".format(type, idx))
     for i in range(batch_size):
-        print("Saving {} {} image".format(ith_image, real))
+        # print("Saving {} {} image".format(ith_image, real))
         slice_img =  tio.ScalarImage(tensor=img[i, :, :, :, :].cpu().detach())
-        saved_file_path = file_path + "/" + type + "_{}.nii.gz".format(ith_image)
+        saved_file_path = file_path + "/" + type + "_data{}.nii.gz".format(idx)
         slice_img.save(saved_file_path)
         ith_image += 1
 
@@ -41,9 +41,9 @@ def main(args):
 
 
     USE_CUDA = torch.cuda.is_available()
-    device = torch.device("cuda:4" if USE_CUDA else "cpu")
+    device = torch.device("cuda:3" if USE_CUDA else "cpu")
 
-    gpus = [4,5,6]
+    gpus = [3]
 
     G_M = nn.DataParallel(G_M, device_ids=gpus, output_device=gpus[0])
     G_P = nn.DataParallel(G_P, device_ids=gpus, output_device=gpus[0])
@@ -62,33 +62,33 @@ def main(args):
     ith_image_mri = 0
     ith_image_pet = 0
     for idx, batch in enumerate(val_loader):
-        if idx is 3: break
+        # data_path = val_loader.dataset.datasets[idx].data_path
+        # print(data_path)
         img_mri = batch['img_mri'].reshape((args.batch_size, 48, 64, 48, 1)).permute(0, 4, 1, 2, 3)
         img_pet = batch['img_pet'].reshape((args.batch_size, 48, 64, 48, 1)).permute(0, 4, 1, 2, 3)
         #os.environ['CUDA_VISIBLE_DEVICES'] = '0,1'
         #N, C, D, H, W = content_images.shape
-        img_mri = F.interpolate(img_mri, size=(96, 128, 96), mode='nearest').to(device)
-        img_pet = F.interpolate(img_pet, size=(96, 128, 96), mode='nearest').to(device)
+        #img_mri = F.interpolate(img_mri, size=(96, 128, 96), mode='nearest').to(device)
+        #img_pet = F.interpolate(img_pet, size=(96, 128, 96), mode='nearest').to(device)
         with torch.no_grad():
             out_pet = G_P(img_mri)
             out_mri = G_M(img_pet)
         
-        out_pet = F.interpolate(out_pet, size=(48, 64, 48), mode='nearest')
-        #out_pet = out_pet.type(torch.float32).cpu().detach().numpy()
-        out_pet = out_pet.type(torch.float32)
+            #out_pet = F.interpolate(out_pet, size=(48, 64, 48), mode='nearest')
+            #out_pet = out_pet.type(torch.float32).cpu().detach().numpy()
+            out_pet = out_pet.type(torch.float32)
 
-        out_mri = F.interpolate(out_mri, size=(48, 64, 48), mode='nearest')
-        #out_mri = out_mri.type(torch.float32).cpu().detach().numpy()
-        out_mri = out_mri.type(torch.float32)
+            #out_mri = F.interpolate(out_mri, size=(48, 64, 48), mode='nearest')
+            #out_mri = out_mri.type(torch.float32).cpu().detach().numpy()
+            out_mri = out_mri.type(torch.float32)
         
-        save_image(args.test_save_mri, out_mri, "mri", ith_image_mri, "output")
-        save_image(args.test_save_pet, out_pet, "pet", ith_image_pet, "output")
-        ith_image_mri = 0 
-        ith_image_pet = 0
-        print("Saving Changed Test Data")
-        save_image("./nii_data/changed_val/mri", img_mri, "mri", ith_image_mri, "real")
-        save_image("./nii_data/changed_val/pet", img_pet, "pet", ith_image_pet, "real")
-        break
+            save_image(args.test_save_mri, out_mri, "mri", ith_image_mri, "output", idx)
+            save_image(args.test_save_pet, out_pet, "pet", ith_image_pet, "output", idx)
+            # ith_image_mri = 0 
+            # ith_image_pet = 0
+            #print("Saving Changed Test Data")
+            #save_image("./nii_data/changed_val/mri", img_mri, "mri", ith_image_mri, "real")
+            #save_image("./nii_data/changed_val/pet", img_pet, "pet", ith_image_pet, "real")
 
         
 
@@ -116,7 +116,7 @@ if __name__ == '__main__':
     parser.add_argument('--input_w', default=96, type=int)
     parser.add_argument('--input_h', default=128, type=int)
     parser.add_argument('--input_d', default=96, type=int)
-    parser.add_argument('--batch_size', type=int, default=5) 
+    parser.add_argument('--batch_size', type=int, default=1) 
     parser.add_argument('--style_weight', type=float, default=10.0)
     parser.add_argument('--content_weight', type=float, default=7.0)
     parser.add_argument('--n_thr    eads', type=int, default=16)

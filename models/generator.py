@@ -8,13 +8,16 @@ from torch.nn import init
 from einops import rearrange
 from einops.layers.torch import Rearrange
 import torch.nn.functional as F
+#from diff_aug import DiffAugment
 from models.diff_aug import DiffAugment
+from models.GANLoss import adaptive_instance_normalization as adin
 
 def conv_3x3_bn(inp, oup, image_size, downsample=False):
     stride = 1 if downsample == False else 2
     return nn.Sequential(
         nn.Conv3d(inp, oup, 3, stride, 1, bias=False),
         nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+        #nn.InstanceNorm3d(oup),
         nn.GELU()
     )
 
@@ -24,12 +27,14 @@ def tranConv_3x3_bn(inp, oup, image_size, upsample=False):
         return nn.Sequential(
             nn.ConvTranspose3d(inp, oup, 3, stride, 1, output_padding=1, bias=False),
             nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+            #nn.InstanceNorm3d(oup),
             nn.GELU()
         )
     else:
         return nn.Sequential(
             nn.ConvTranspose3d(inp, oup, 3, stride, 1, bias=False),
             nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+            #nn.InstanceNorm3d(oup),
             nn.GELU()
         )
 
@@ -117,10 +122,12 @@ class MBConv(nn.Module):
                     nn.Conv3d(hidden_dim, hidden_dim, 3, stride,
                             1, groups=hidden_dim, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                    #nn.InstanceNorm3d(hidden_dim),
                     nn.GELU(),
                     # pw-linear
                     nn.Conv3d(hidden_dim, oup, 1, 1, 0, bias=False),
                     nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+                    #nn.InstanceNorm3d(oup),
                 )
         else:
             self.conv = nn.Sequential(
@@ -128,16 +135,19 @@ class MBConv(nn.Module):
             # down-sample in the first conv
                 nn.Conv3d(inp, hidden_dim, 1, stride, 0, bias=False),
                 nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                #nn.InstanceNorm3d(hidden_dim),
                 nn.GELU(),
                 # dw
                 nn.Conv3d(hidden_dim, hidden_dim, 3, 1, 1,
                           groups=hidden_dim, bias=False),
                 nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                #nn.InstanceNorm3d(hidden_dim),
                 nn.GELU(),
                 SE(inp, hidden_dim),
                 # pw-linear
                 nn.Conv3d(hidden_dim, oup, 1, 1, 0, bias=False),
                 nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+                #nn.InstanceNorm3d(oup),
             )
 
         self.conv = PreNorm(inp, self.conv, nn.LayerNorm, image_size, self.downsample, False)
@@ -168,10 +178,12 @@ class TransMBConv(nn.Module):
                 nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, stride,
                             1, groups=hidden_dim, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    #nn.InstanceNorm3d(hidden_dim),
                     nn.GELU(),
                     # pw-linear
                     nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    #nn.InstanceNorm3d(hidden_dim)
                 )
         else:
             if self.upsample:
@@ -179,17 +191,20 @@ class TransMBConv(nn.Module):
                     # pw
                     # up-sample in the first conv
                     nn.ConvTranspose3d(inp, hidden_dim, 1, stride, 0, bias=False),
-                    nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    #nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    nn.InstanceNorm3d(hidden_dim),
                     nn.GELU(),
                     # dw
                     nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, 1, 1,
                           groups=hidden_dim, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    #nn.InstanceNorm3d(hidden_dim),
                     nn.GELU(),
                     SE(inp, hidden_dim),
                     # pw-linear
                     nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
                     nn.LayerNorm([oup, image_size[0]//2, image_size[1]//2, image_size[2]//2]),
+                    #nn.InstanceNorm3d(oup)
                 )
             else:
                 self.deconv = nn.Sequential(
@@ -197,16 +212,19 @@ class TransMBConv(nn.Module):
                     # up-sample in the first conv
                     nn.ConvTranspose3d(inp, hidden_dim, 1, stride, 0, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                    #nn.InstanceNorm3d(hidden_dim),
                     nn.GELU(),
                     # dw
                     nn.ConvTranspose3d(hidden_dim, hidden_dim, 3, 1, 1,
                           groups=hidden_dim, bias=False),
                     nn.LayerNorm([hidden_dim, image_size[0], image_size[1], image_size[2]]),
+                    #nn.InstanceNorm3d(hidden_dim),
                     nn.GELU(),
                     SE(inp, hidden_dim),
                     # pw-linear
                     nn.ConvTranspose3d(hidden_dim, oup, 1, 1, 0, bias=False),
                     nn.LayerNorm([oup, image_size[0], image_size[1], image_size[2]]),
+                    #nn.InstanceNorm3d(oup)
                 )
 
         self.deconv = TransPreNorm(inp, self.deconv, nn.LayerNorm, image_size, self.upsample, False)
@@ -417,18 +435,42 @@ class ConvTrantGe(nn.Module):
 
         # self.ups0  = nn.ConvTranspose3d(channels[0],  in_channels, 3, 1, 1, bias=False)
 
+        # self.out = nn.Sequential(
+        #     nn.Upsample(scale_factor=0.5, mode='trilinear'),
+        #     nn.Tanh()
+        # )
         self.out = nn.Sequential(
-            nn.Upsample(scale_factor=0.5, mode='trilinear'),
+            nn.AdaptiveAvgPool3d((self.id, self.ih, self.iw)),
             nn.Tanh()
         )
+        #self.out = nn.Upsample(scale_factor=0.5, mode='trilinear')
+        self.interplation = nn.Upsample(scale_factor=2, mode='trilinear')
+
+    
+       
+    def encode_with_intermediate(self, input):
+        results = [input]
+        for i in range(5):
+            func = getattr(self, 'downs{:d}'.format(i))
+            results.append(func(results[-1]))
+        return results[1:]
+
+    def encode(self, input):
+        for i in range(5):
+            input = getattr(self, 'downs{:d}'.format(i))(input)
+        return input
+
 
     def forward(self, x):
-        x = DiffAugment(x, self.diff_aug)
-        x = self.downs0(x)
-        stage1 = self.downs1(x)
+        target = self.interplation(x[1])
+        input =  DiffAugment(x[0], self.diff_aug)
+        input = self.downs0(input)
+        stage1 = self.downs1(input)
         stage2 = self.downs2(stage1)
         stage3 = self.downs3(stage2)
         stage4 = self.downs4(stage3)
+        target = self.encode(target)
+        stage4 = adin(stage4, target)
 
         upstage4 = self.ups4((stage4, stage3))
         del stage3, stage4
@@ -436,8 +478,8 @@ class ConvTrantGe(nn.Module):
         del upstage4, stage2
         upstage2 = self.ups2((upstage3, stage1))
         del upstage3, stage1
-        upstage1 = self.ups1((upstage2, x))
-        del upstage2, x
+        upstage1 = self.ups1((upstage2, input))
+        del upstage2, input
         upstage0 = self.ups0(upstage1)
         del upstage1
         #print(upstage0.min(), upstage0.max())
@@ -467,13 +509,8 @@ class ConvTrantGe(nn.Module):
 
 
 def generate_ConvTrantGe(args):
-    num_blocks = [2, 2, 2, 3, 2]
-    # num_blocks =[2, 2, 4, 7, 3] # L
+    num_blocks = [2, 2, 3, 5, 2]
     channels = [32, 64, 128, 256, 512]
-    #channels = [32, 64, 128, 256, 512]
-    #patch_size = [8, 4, 2, 1]      # D
-    #channels  = [128, 128, 256, 512, 1026]
-    # return ConvTrantGe((96, 128, 96), 1, num_blocks, channels, args.batch_size)
     return ConvTrantGe((96, 128, 96), 1, num_blocks, channels, 1, 'interpolation')
 
 

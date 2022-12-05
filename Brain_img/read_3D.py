@@ -2,7 +2,35 @@ import os
 import torch
 from tfrecord.torch.dataset import MultiTFRecordDataset
 from tfrecord.torch.dataset import TFRecordDataset
-from torch.utils.data import IterableDataset, ChainDataset, DataLoader
+from torch.utils.data import IterableDataset, ChainDataset, DataLoader, Dataset
+import itertools 
+
+class MyDataSet(Dataset):
+    def __init__(self, data_path, index_path, length, len_tf):
+        self.length = length
+        self.data = []
+
+        self.tfRecordDatasetList = []
+        self.dataloaderList = []
+
+        for i in range(len_tf):
+            self.tfRecordDatasetList.append(TFRecordDataset(data_path[i], index_path[i]))
+            
+        for i in range(len_tf):
+            self.dataloaderList.append(torch.utils.data.DataLoader(self.tfRecordDatasetList[i], batch_size=1))
+            
+        for i, dataloader in enumerate(self.dataloaderList):
+            each_list = list(dataloader)
+            self.data =  list(itertools.chain(self.data, each_list))
+            
+        del self.tfRecordDatasetList, self.dataloaderList
+        
+
+    def __len__(self):
+        return len(self.data)
+    
+    def __getitem__(self, index):
+        return  self.data[index]
 
 
 def data_loader(train_tfrecord_pattern, train_index_pattern,
@@ -53,13 +81,11 @@ def get_data_loader_list(train_file_list, train_file_indices, val_file_list, val
     train_dataset_list = []
     val_dataset_list = []
     for i in range(n_train):
-        dataset = TFRecordDataset(train_file_list[i], train_file_indices[i])
-        # loader = torch.utils.data.DataLoader(dataset)
+        dataset = MyDataSet(train_file_list[i], train_file_indices[i], 1)
         train_dataset_list.append(dataset)
 
     for i in range(n_val):
-        dataset = TFRecordDataset(val_file_list[i], val_file_indices[i])
-        # loader = torch.utils.data.DataLoader(dataset)
+        dataset = MyDataSet(val_file_list[i], val_file_indices[i], 1)
         val_dataset_list.append(dataset)
 
     return train_dataset_list, val_dataset_list
@@ -86,10 +112,15 @@ def get_data_loader(args):
     train_file_indices = [args.train_index_pattern.format(i) for i in [i for i in range(73)]]
     val_file_list = [args.val_tfrecord_pattern.format(i) for i in [i for i in range(8)]]
     val_file_indices = [args.val_index_pattern.format(i) for i in [i for i in range(8)]]
-    train_dataset_list, val_dataset_list = \
-        get_data_loader_list(train_file_list, train_file_indices,
-                             val_file_list, val_file_indices, args.batch_size, args.batch_size)
-    train_loader, val_loader = concat_dataset_loader(train_dataset_list, val_dataset_list, args.batch_size, args.batch_size)
+    # train_dataset_list, val_dataset_list = \
+    #     get_data_loader_list(train_file_list, train_file_indices,
+    #                          val_file_list, val_file_indices, 73, 8)
+    # train_loader, val_loader = concat_dataset_loader(train_dataset_list, val_dataset_list, args.batch_size, args.batch_size)
+    train_dataset = MyDataSet(train_file_list, train_file_indices, args.n_train, 73)
+    val_dataset = MyDataSet(val_file_list, val_file_indices, args.n_val, 8)
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size)
+    # list_train = list(train_loader)
 
     return train_loader, val_loader
 
